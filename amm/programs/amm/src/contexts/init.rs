@@ -36,7 +36,7 @@ pub struct Initialize<'info> {
         associated_token::authority = auth
     )]
     pub vault_y: Box<InterfaceAccount<'info, TokenAccount>>,
- 
+    /// CHECK: this is safe
     #[account(
         seeds = [b"auth"],
         bump

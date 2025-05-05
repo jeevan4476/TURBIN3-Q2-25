@@ -4,64 +4,40 @@ use crate::{assert_non_zero, assert_not_expired, assert_not_locked};
 use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
-    token_interface::{
-        mint_to, transfer_checked, Mint, MintTo, TokenAccount, TokenInterface, TransferChecked,
-    },
+    token_interface::{transfer_checked, Mint, TokenAccount, TokenInterface, TransferChecked},
 };
-use constant_product_curve::ConstantProduct;
+use constant_product_curve::{ConstantProduct, LiquidityPair};
 
 #[derive(Accounts)]
-pub struct Deposit<'info> {
+pub struct Swap<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
     pub mint_x: Box<InterfaceAccount<'info, Mint>>,
     pub mint_y: Box<InterfaceAccount<'info, Mint>>,
-
     #[account(
-        init_if_needed,
+        mut,
         seeds = [b"lp",config.key().as_ref()],
-        payer = user,
         bump,
         mint::decimals = 6,
         mint::authority = auth
-
     )]
     pub mint_lp: Box<InterfaceAccount<'info, Mint>>,
-
     #[account(
         mut,
-        associated_token::mint = mint_x,
-        associated_token::authority = auth
+        associated_token::authority = auth,
+        associated_token::mint = mint_x
     )]
     pub vault_x: Box<InterfaceAccount<'info, TokenAccount>>,
-
     #[account(
         mut,
-        associated_token::mint = mint_y,
-        associated_token::authority = auth
+        associated_token::authority = auth,
+        associated_token::mint = mint_y
     )]
     pub vault_y: Box<InterfaceAccount<'info, TokenAccount>>,
-
-    #[account(
-        mut,
-        associated_token::mint = mint_x,
-        associated_token::authority = auth
-    )]
+    #[account()]
     pub user_x: Box<InterfaceAccount<'info, TokenAccount>>,
-
-    #[account(
-        mut,
-        associated_token::mint = mint_y,
-        associated_token::authority = auth
-    )]
+    #[account()]
     pub user_y: Box<InterfaceAccount<'info, TokenAccount>>,
-    #[account(
-        init_if_needed,
-        payer = user,
-        associated_token::mint = mint_lp,
-        associated_token::authority = user,
-    )]
-    pub user_lp: Box<InterfaceAccount<'info, TokenAccount>>,
     /// CHECK: this is safe
     #[account(
         seeds = [b"auth"],
@@ -79,37 +55,36 @@ pub struct Deposit<'info> {
     pub system_program: Program<'info, System>,
 }
 
-impl<'info> Deposit<'info> {
-    pub fn deposit(&mut self, amount: u64, max_x: u64, max_y: u64, expiration: i64) -> Result<()> {
+impl<'info> Swap<'info> {
+    pub fn swap(&mut self, is_x: bool, amount: u64, min: u64, expiration: i64) -> Result<()> {
         assert_not_locked!(self.config.locked);
         assert_not_expired!(expiration);
-        assert_non_zero!([amount, max_x, max_y]);
+        assert_non_zero!([amount]);
 
-        let (x, y) = match self.mint_lp.supply == 0
-            && self.vault_x.amount == 0
-            && self.vault_y.amount == 0
-        {
-            true => (max_x, max_y),
-            false => {
-                let amount = ConstantProduct::xy_deposit_amounts_from_l(
-                    self.vault_x.amount,
-                    self.vault_y.amount,
-                    self.mint_lp.supply,
-                    amount,
-                    6,
-                )
-                .map_err(AmmError::from)?;
-                (amount.x, amount.y)
-            }
+        let mut curve = ConstantProduct::init(
+            self.vault_x.amount,
+            self.vault_y.amount,
+            self.mint_lp.supply,
+            self.config.fee,
+            None,
+        )
+        .map_err(AmmError::from)?;
+
+        let p = match is_x {
+            true => LiquidityPair::X,
+            false => LiquidityPair::Y,
         };
-        require!(x <= max_x && y <= max_y, AmmError::SlippageExceeded);
 
-        self.deposit_tokens(true, x)?;
-        self.deposit_tokens(false, y)?;
-        self.mint_lp_tokens(amount)
+        let res = curve.swap(p, amount, min).map_err(AmmError::from)?;
+
+        assert_non_zero!([res.deposit, res.withdraw]);
+
+        self.deposit_token(is_x, res.deposit)?;
+        self.withdraw_token(is_x, res.withdraw)?;
+        Ok(())
     }
 
-    pub fn deposit_tokens(&mut self, is_x: bool, amount: u64) -> Result<()> {
+    pub fn deposit_token(&mut self, is_x: bool, amount: u64) -> Result<()> {
         let mint;
         let (from, to) = match is_x {
             true => {
@@ -128,22 +103,40 @@ impl<'info> Deposit<'info> {
             }
         };
 
-        let cpi_account = TransferChecked {
+        let account = TransferChecked {
             from,
             mint: mint.to_account_info(),
             to,
             authority: self.user.to_account_info(),
         };
+        let ctx = CpiContext::new(self.token_program.to_account_info(), account);
 
-        let cpi_ctx = CpiContext::new(self.token_program.to_account_info(), cpi_account);
-
-        transfer_checked(cpi_ctx, amount, 6)
+        transfer_checked(ctx, amount, 6)
     }
 
-    pub fn mint_lp_tokens(&self, amount: u64) -> Result<()> {
-        let accounts = MintTo {
-            mint: self.mint_lp.to_account_info(),
-            to: self.user_lp.to_account_info(),
+    pub fn withdraw_token(&mut self, is_x: bool, amount: u64) -> Result<()> {
+        let mint;
+        let (from, to) = match is_x {
+            true => {
+                mint = self.mint_x.clone();
+                (
+                    self.vault_y.to_account_info(),
+                    self.user_y.to_account_info(),
+                )
+            }
+            false => {
+                mint = self.mint_y.clone();
+                (
+                    self.vault_x.to_account_info(),
+                    self.user_x.to_account_info(),
+                )
+            }
+        };
+
+        let account = TransferChecked {
+            from,
+            mint: mint.to_account_info(),
+            to,
             authority: self.auth.to_account_info(),
         };
 
@@ -152,9 +145,9 @@ impl<'info> Deposit<'info> {
 
         let ctx = CpiContext::new_with_signer(
             self.token_program.to_account_info(),
-            accounts,
+            account,
             signer_seeds,
         );
-        mint_to(ctx, amount)
+        transfer_checked(ctx, amount, 6)
     }
 }
