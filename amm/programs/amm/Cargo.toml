@@ -19,7 +19,7 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 [dependencies]
 anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
 anchor-spl = "0.31.1"
-getrandom = { version = "0.3.2", features = ["custom"] }
+getrandom ="0.3.2"
 winnow="=0.7.9"
 toml_datetime="=0.6.9"
 constant-product-curve = { git = "https://github.com/deanmlittle/constant-product-curve.git" }

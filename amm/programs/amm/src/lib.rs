@@ -1,21 +1,17 @@
-pub mod constants;
-pub mod error;
-pub mod contexts;
-pub mod state;
-
 use anchor_lang::prelude::*;
 
-pub use constants::*;
-pub use contexts::*;
-pub use state::*;
+mod constants;
+mod contexts;
+mod state;
+use contexts::*;
+mod error;
+mod helpers;
 
-declare_id!("JAddDtwQn7oytJ4PkvGGaTdTEWBG7usXxYbjZN1q4dRv");
+declare_id!("At4PqZrjhNPxRPwogRRYWqht445CC6pty9bbnfj33bke");
 
 #[program]
 pub mod amm {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
-        initialize::handler(ctx)
-    }
+
 }

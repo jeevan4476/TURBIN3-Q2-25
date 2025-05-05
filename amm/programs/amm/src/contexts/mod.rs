@@ -1,3 +1,7 @@
-pub mod initialize;
+pub mod init;
 
-pub use initialize::*;
+pub use init::*;
+
+pub mod deposit;
+
+pub use deposit::*;
