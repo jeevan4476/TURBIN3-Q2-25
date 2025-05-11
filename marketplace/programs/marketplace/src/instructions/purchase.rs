@@ -106,4 +106,6 @@ impl <'info> Purchase<'info>{
         transfer(cpi_ctx, marketplace_fee)?; 
         Ok(())
     }
+
+    
 }
