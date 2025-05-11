@@ -1,0 +1,3 @@
+[submodule "Capstone_Stableguard"]
+	path = Capstone_Stableguard
+	url = https://github.com/jeevan4476/StableGuard.git
